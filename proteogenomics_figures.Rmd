@@ -1,0 +1,439 @@
+---
+title: "Exploring the pan-cancer landscape of posttranscriptional regulation"
+author: "Dr. Umesh Ghoshdastider"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    toc: yes
+---
+
+# import libraries
+```{r}
+library(ggplot2)
+suppressPackageStartupMessages(library(circlize))
+library(reshape2)
+library(tidyr)
+library(dplyr)
+library(ComplexHeatmap)
+library(viridis)
+library(forcats)
+library(survival)
+library(survivalAnalysis)
+library(survminer)
+library(enrichR)
+library(stringr)
+```
+
+# Fig 1G
+```{r fig.height=10, fig.width=4}
+df= read.csv('data/rna_prot_corr_quartile.csv', row.names = 1)
+df = na.omit(df)
+
+# use spearman correlation distance
+dis_col = as.dist(1 - cor(df   , method = "spearman" ) )
+
+# dont show gene names
+pheatmap::pheatmap(df, 
+         show_rownames=FALSE, 
+         #filename = 'output/rna_prot_corr_heatmap_genes.pdf',
+         cutree_rows=8, 
+         clustering_method = 'ward.D2', 
+         clustering_distance_cols = dis_col,
+         width = 4, 
+         height = 10)
+```
+
+
+# Fig 1F
+```{r fig.width=6}
+pheatmap::pheatmap(cor(df), 
+         #filename = 'output/rna_prot_corr_heatmap_genes_corr.pdf',
+         )
+```
+
+
+# Fig 3E Oncoprint
+```{r fig.width=10}
+# mutations annotations
+c= read.csv('data/oncoprint_mutations_annotations.csv', row.names = 1)
+
+# mutation data
+m= read.csv('data/oncoprint_mutations.csv', row.names = 1)
+
+rownames(c)=colnames(m)
+
+col_fun = colorRamp2(c(0, 1), c("white", "dodgerblue4"))
+
+#pdf('output/oncoprint_mutations.pdf', width = 10, height = 6)
+
+ha = HeatmapAnnotation(
+    empty = anno_empty(border = FALSE),
+    foo = anno_block(gp = gpar(fill = 2:6), labels = unique(c$type))
+)
+
+ht_opt$heatmap_row_names_gp = gpar(fontsize = 6)
+
+Heatmap(m,
+        cluster_rows = FALSE,
+        #cluster_columns = FALSE,
+        show_column_names = FALSE,
+        column_split = c$type,
+        col=col_fun,
+        top_annotation = HeatmapAnnotation(df = c)
+        )
+
+#dev.off()
+```
+
+# Fig 2A, Circos plot of driver genes correlations
+```{r fig.width=10}
+# read corr data
+median1=function(x) {median(x, na.rm = TRUE)}
+sd1=function(x) {sd(x, na.rm = TRUE)}
+
+# read correlations
+d= read.csv('data/rna_prot_corr_quartile.csv', row.names = 1)
+mf= read.csv('data/mutation_freq.csv')[c('Gene','Pancan.Frequency')]  %>% distinct() 
+ov=intersect(mf$Gene, rownames(d))
+df=d[ov,]
+
+# remove genes with missing data in 10 cancer types
+tmp=rowSums(is.na(df) )
+tmp=tmp[tmp<10]
+
+df=df[names(tmp),]
+
+# get mutation freq
+mf1=subset(mf, Gene %in% rownames(df))
+rownames(mf1)=mf1$Gene
+mf1$Gene=NULL
+
+circos.clear()
+circos.par(gap.degree = 5)
+
+#pdf('output/mutation_corr_freq_circos.pdf')
+
+col_fun = colorRamp2(seq(-1,1, length.out = 20), inferno(20))
+#col_fun1 = colorRamp2(c(0, 0.4), c("white", "green"))
+col_fun1 = colorRamp2(seq(0, 0.4, length.out = 10), viridis(10))
+
+# heatmap of corr across cancer types
+#co1[is.na(co1)] = 0
+
+circos.heatmap(df, 
+               col = col_fun, 
+               rownames.side='outside',
+               #cluster= FALSE,
+               cell.border ='grey',
+               dend.side = 'inside',
+               rownames.cex = 0.4,
+               #clustering.method = 'ward.D2',
+               #split = 4,
+               )
+
+# add column names circos.text
+circos.track(track.index = get.current.track.index(), panel.fun = function(x, y) {
+        cn = colnames(df)
+        n = length(cn)
+        circos.text(rep(CELL_META$cell.xlim[2], n) + convert_x(1, "mm"), 
+            1:n - 0.5, cn, 
+            cex = 0.2, facing = "inside")
+    
+}, bg.border = NA)
+
+# heatmap avg corr
+circos.par("track.height" = 0.01)
+#rowm = rowMeans(df[CELL_META$row_order,], na.rm =TRUE)
+#med= apply(df[CELL_META$row_order,], 1, median1)
+med= apply(df, 1, median1)
+circos.heatmap(med, col = col_fun, cluster= FALSE) #  
+
+# sd corr
+circos.par("track.height" = 0.01)
+sd= apply(df, 1, sd1)
+circos.heatmap(sd, col = col_fun1, cluster= FALSE) # col = col_fun,
+
+# barplot mutation freq
+circos.par("track.height" = 0.3)
+circos.track(ylim = c(0, 38), panel.fun = function(x, y) {
+    circos.barplot( mf1[CELL_META$row_order,], 1:dim(mf1)[1]-0.5, col=3 )
+})
+circos.yaxis(side = "left", labels.cex= 0.25)
+
+
+# draw colorbar
+lgd1 = Legend(col_fun = col_fun, title = "corr")
+lgd2 = Legend(col_fun = col_fun1, title = "sd")
+
+lgd = packLegend(lgd1, lgd2)
+
+draw(lgd, x = unit(2, "mm"), y = unit(2, "mm"), just = c("left", "bottom"))
+
+#df$sd=sd
+#df$median=med
+#write.csv(df,'output/circos_input.csv')
+
+#dev.off()
+```
+# Fig 2A boxplot
+
+```{r}
+d= read.csv('data/rna_prot_corr_quartile.csv', row.names = 1)
+mf= read.csv('data/mutation_freq.csv')[c('Gene','Pancan.Frequency')]  %>% distinct() 
+
+d1=melt(d)
+d1$type='all'
+
+d2=melt(d[mf$Gene,])
+d2$type='driver'
+
+d3=rbind(d1,d2)
+colnames(d3)=c('type','corr','genes')
+
+ggplot(d3, aes(type, corr, fill=genes)) + 
+  geom_boxplot() + 
+  theme_bw() +
+  scale_fill_manual(values = c('darkgreen','darkorange')) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#ggsave('output/rna_prot_corr_driver.pdf', width = 10, height = 8)
+
+```
+# Fig 2B
+```{r fig.width=20, fig.height=6}
+df= read.csv('data/rna_prot_corr_quartile.csv', row.names = 1)
+
+# read oncokb targets
+ca=read.table('oncokb_targets')
+
+ov=intersect(ca$V1, rownames(df))
+
+df=df[ov,]
+
+# remove genes with missing data in 10 cancer types
+tmp=rowSums(is.na(df) )
+tmp=tmp[tmp<11]
+
+df=df[names(tmp),]
+
+# horizontal
+pheatmap::pheatmap(t(df), 
+         show_rownames=TRUE, 
+         color=inferno(20),
+         #filename = 'output/rna_prot_corr_oncokb_targets.pdf',
+         width = 20, 
+         height =4)
+
+```
+
+# Fig 3A
+
+```{r fig.height=10, fig.width=5}
+df=read.csv('data/mutation_corr_wilcoxon.csv')
+df$q=p.adjust(df$pv, method = 'BH')
+d1=subset(df, q < 0.05)
+#d1=subset(df, abs(diff)>0.01)
+
+# select mutations in >1 cancer type
+count = sort(table(d1$gene))
+count=count[count>3]
+
+d1= subset(d1, d1$gene %in% names(count))
+
+d1$diff=d1$mm-d1$wm
+d1$size= -log10(d1$q)
+
+d1$shape=ifelse(d1$diff>0,'pos','neg')
+#write.csv(d1, 'mutation_corr_wilcoxon_new1_fdr05.csv')
+
+d1 %>%
+  mutate(gene = fct_reorder(gene, desc(gene))) %>%
+  ggplot( aes(ty, gene, size=size, color=diff)) +
+  geom_point() +
+  scale_colour_gradient2(low = 'blue', high='red', mid = 'white' ) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  geom_point(shape=21, color='black')
+
+
+#ggsave('output/mutation_corr_wilcoxon.pdf', height = 10, width = 5)
+
+```
+
+# Fig 3D
+```{r fig.width=8}
+d=read.csv('data/gsea_merged_padj.csv')
+
+ggplot(d, aes(ty,X, color=NES, size=-log10(FDR.q.val+0.001))) +
+  geom_point() +  
+  scale_color_viridis() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+# Fig 4F
+```{r fig.height=10, fig.width=10}
+library(EnhancedVolcano)
+
+a=read.csv('data/brca_protein_spearman_high_vs_low_tertile_de_padj.csv', row.names = 1)
+
+EnhancedVolcano(a,
+    lab = rownames(a),
+    x = 'lfc',
+    y = 'padj_ttest',
+    pCutoff = 0.01,
+    FCcutoff = 1,
+    pointSize = 1,
+    labSize = 3,
+    xlim = c(-2.5, 2.5),
+    ylim= c(0,7.5),
+    title = 'BRCA upper vs lower tertile',
+    ylab=bquote(~-Log[10]~ 'FDR')) 
+ 
+#ggsave('output/brca_volcano.pdf', height = 10, width = 10)
+```
+# Fig 4D
+```{r}
+b = read.csv('tcga_purity_tidyestimate_survival.csv')
+
+b$spearman_10x = b$spearman*10
+
+b %>% analyse_multivariate(vars(PFI.time, PFI),
+                       covariates = vars(spearman_10x, age, purity, ty),
+                       ) ->  result
+forest_plot(result, ggtheme = ggplot2::theme_bw(base_size = 10))
+
+#ggsave('pdf/TCGA_all_pfi_new3_10x.pdf')
+
+```
+
+# Fig 4E
+```{r}
+b %>% analyse_multivariate(vars(OS.time, OS),
+                       covariates = vars(spearman_10x, age, purity, ty),
+                       ) ->  result
+forest_plot(result, ggtheme = ggplot2::theme_bw(base_size = 10))
+
+```
+
+# Fig 4B
+```{r fig.width=6}
+low =filter(b, spearman < quantile(b$spearman,1/3,  na.rm=T)[[1]] )
+high=filter(b, spearman > quantile(b$spearman,2/3,  na.rm=T)[[1]] )
+
+low[,'group'] ='low'
+high[,'group']='high'
+d=rbind(low,high)
+
+km=survfit( Surv(PFI.time, PFI) ~ group, d)
+ggsurvplot(km, pval = T, title ='spearman', palette = c('red4','blue4'))
+```
+
+# Fig 4A
+```{r fig.width=6}
+low =filter(b, spearman < quantile(b$spearman,1/3,  na.rm=T)[[1]] )
+high=filter(b, spearman > quantile(b$spearman,2/3,  na.rm=T)[[1]] )
+
+low[,'group'] ='low'
+high[,'group']='high'
+d=rbind(low,high)
+
+km=survfit( Surv(OS.time, OS) ~ group, d)
+ggsurvplot(km, pval = T, title ='spearman', palette = c('red4','blue4'))
+```
+
+# Fig S4
+```{r}
+pur=read.csv('data/purity_tidyestimate_all_anno.csv')
+ggplot(pur, aes(cancer_type,purity, fill=cancer_type)) + 
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90))
+
+#ggsave('output/tumor_purity_boxplot.pdf')
+```
+
+```{r}
+df=read.csv('data/spearman_partial_corr_cancer_types.csv')
+
+d=reshape2::melt(df)
+
+ggplot(d, aes(ty, value, fill=variable)) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#ggsave('output/spearman_partial_corr_cancer_types_boxplot.pdf', width = 10, height = 5)
+
+
+```
+
+# Fig S4 C
+```{r fig.height=10, fig.width=4}
+e=dcast(df, X ~ ty, value.var = 'spearman_partial' ) %>% tibble::column_to_rownames('X')
+e=na.omit(e)
+
+# not so good, use spearman correlation distance
+dis_col = as.dist(1 - cor(e   , method = "spearman" ) )
+#dis_row = as.dist(1 - cor(t(df), method = "spearman" ) )
+              
+# dont show gene names
+pheatmap::pheatmap(e, 
+         show_rownames=FALSE, 
+         #filename = 'rna_prot_partial_corr_heatmap1.pdf',
+         cutree_rows=8, 
+         clustering_method = 'ward.D2', 
+         clustering_distance_cols = dis_col,
+         width = 4, 
+         height = 10)
+
+
+```
+
+# Fig S8
+```{r}
+library(pathview)
+
+df=read.csv('data/brca_protein_spearman_high_vs_low_tertile_de_padj.csv', row.names = 1)
+df=subset(df, padj_ttest<0.01)
+
+pathview(gene.data =df[1], pathway.id = "03040", gene.idtype = 'SYMBOL')
+
+```
+
+```{r pressure, echo=FALSE, fig.cap="Fig S8", out.width = '100%'}
+knitr::include_graphics("hsa03010.png", dpi=100)
+```
+
+
+# Fig 1H, 1I, S2 pathway enrichment analysis
+```{r}
+# # gene cluster annotations
+# cl=read.csv('data/cluster_genes.csv')
+# 
+# pdf('output/rna_prot_corr_cluster_GO.pdf', height=5,width=9 )
+# 
+# # ,'GO_Cellular_Component_2021','GO_Molecular_Function_2021'
+# for ( pathway in c('GO_Biological_Process_2021') ) {
+# 
+#   for (c in c(1:max(cl$cluster))) {
+#     er=enrichr(subset(cl, cluster==c)$gene,'GO_Biological_Process_2021')[[1]]
+#     
+#     er1 = er %>% filter(Adjusted.P.value <0.25)
+#     
+#     er1$fraction_overlap = sapply(er1$Overlap, function(x) eval(parse(text=x)))
+#     
+#     er1$overlap = as.double(str_split_fixed(er1$Overlap,'/',2)[,1])
+#     
+#     er1$padj=er1$Adjusted.P.value
+#     
+#     p= ggplot(er1[1:20,], aes(fraction_overlap, Term, size= overlap, color=-log10(padj))) + geom_point() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +  scale_color_viridis() + ggtitle(paste0('cluster ',c, pathway) )
+#     
+#     print(p)
+#   }
+#   
+# }
+# 
+# dev.off()
+```
+
+```{r}
+sessionInfo()
+```
